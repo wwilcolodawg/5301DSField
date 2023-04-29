@@ -1,0 +1,219 @@
+---
+title: "NYPD Crime Stats"
+output: html_document
+date: "2023-04-29"
+---
+
+# NYPD Shooting Incidents Data Analysis
+
+The New York City Police Department has a publicly available data set of data shooting incidents.  This data set commences in 2006 and is updated after the end of each calendar year.  The data source can be found at the link below.
+
+### Data Source
+[NYPD Shooting Incidents Data](https://catalog.data.gov/dataset/nypd-shooting-incident-data-historic)
+
+#### Data Source details
+The data set details four primary areas of description of the shooting incidents.  
+1. Victims' demographic profile
+2. Perpetrators' demographic profile
+3. Location descriptors of where the incident occurred
+4. A designation of the incident's crime type - Murder vs. Non-Murder
+
+# Focus of Analysis
+The below analysis will focus on the time attributes of a shooting as well as where the shooting occurred.  It will explore whether those attributes correlate with whether the shooting resulted in a Murder.
+
+#### Load Libraries
+Loading the required libraries for analysis
+
+
+```{r}
+library(tidyverse)
+library(lubridate)
+```
+
+
+#### Load Data
+Loading the data directly from the website
+
+
+```{r}
+url_data = "https://data.cityofnewyork.us/api/views/833y-fsy8/rows.csv?accessType=DOWNLOAD"
+nypd_df = read_csv(url_data)
+```
+
+#### Display Initial Data Summary Statistics
+Initial examination of the data to explore the fields and explore data scrubbing requirements
+
+
+```{r}
+dim(nypd_df)
+```
+
+```{r}
+summary(nypd_df)
+```
+
+# Data Scrubbing
+Below are series of steps to modify the data into data types that are more amenable to statistical analysis, as well as create various groupings of or pivot tables that allow for further exploration.
+
+#### Data Scrub #1 Convert Date fields to Date Objects
+
+```{r}
+nypd_df$OCCUR_DATE <- mdy(nypd_df$OCCUR_DATE)
+```
+
+#### Data Scrub #2 Convert Descriptive Variables to Categorical
+
+```{r}
+nypd_df$PERP_SEX <- factor(nypd_df$PERP_SEX)
+nypd_df$PERP_RACE <- factor(nypd_df$PERP_RACE)
+nypd_df$VIC_SEX <- factor(nypd_df$VIC_SEX)
+nypd_df$VIC_RACE <- factor(nypd_df$VIC_RACE)
+```
+
+#### Data Scrub #3 Convert Descriptive Variables to Ordinal
+
+```{r}
+nypd_df$PERP_AGE_GROUP <- factor(nypd_df$PERP_AGE_GROUP, order = TRUE,
+                      levels = c('<18', '18-24',  '25-44', '45-64', '65+'))
+nypd_df$VIC_AGE_GROUP <- factor(nypd_df$VIC_AGE_GROUP, order = TRUE,
+                      levels = c('<18', '18-24',  '25-44', '45-64', '65+'))
+```
+
+#### Data Scrub #4 Add Categorical Variables for Murder Boolean & Boro
+
+```{r}
+nypd_df$BORO_CAT <- factor(nypd_df$BORO)
+nypd_df$MURDER_CAT <- as.integer(nypd_df$STATISTICAL_MURDER_FLAG)
+```
+
+##### Data Scrub #5 Extract Hour of incident
+
+```{r}
+nypd_df$HOUR <- strftime(nypd_df$OCCUR_TIME, "%H")
+```
+
+#### Data Scrub #6 Extract Month & Day of Week
+
+```{r}
+nypd_df$MONTH <- strftime(nypd_df$OCCUR_DATE,"%m")
+```
+
+```{r}
+nypd_df$MONTH <- strftime(nypd_df$OCCUR_DATE,"%m")
+nypd_df$DOWEEK <-strftime(nypd_df$OCCUR_DATE, "%w")
+```
+
+#### Data Scrub #7 Group by Date
+
+```{r}
+daily_incidents <- nypd_df %>% group_by(OCCUR_DATE) %>% summarise(INCIDENT_COUNT = n())
+head(daily_incidents)
+```
+
+#### Data Scrub #8 Group by Boro
+
+```{r}
+boro_df <- nypd_df %>%
+ group_by(BORO) %>%
+ summarize(MURDERS = sum(MURDER_CAT), INCIDENTS = n())
+boro_df$NON_MURDERS = boro_df$INCIDENTS - boro_df$MURDERS
+boro_df$MURDER_PTGE = boro_df$MURDERS / boro_df$INCIDENTS
+```
+
+#### Data Scrub #9 Group by Month
+
+```{r}
+monthly_incidents <- daily_incidents %>% 
+     group_by(MONTH = lubridate::floor_date(OCCUR_DATE, "month")) %>%
+     summarize(MONTHLY_COUNT = sum(INCIDENT_COUNT))
+monthly_incidents$MONTH_NAME <- format(monthly_incidents$MONTH,"%B")
+```
+
+```{r}
+head(monthly_incidents)
+```
+
+```{r}
+month_df <- monthly_incidents %>% 
+     group_by(MONTH_NAME) %>% 
+     summarise(AVG_ICEN = mean(MONTHLY_COUNT), MIN_ICEN = min(MONTHLY_COUNT), 
+               MAX_ICEN = max(MONTHLY_COUNT), MED_ICEN = median(MONTHLY_COUNT))
+```
+
+#### Data Scrub #10 Create Weekday Variable and Month Variable in daily_incidents
+
+```{r}
+daily_incidents$DAY_NUM <- wday(daily_incidents$OCCUR_DATE, week_start=1)
+daily_incidents$DAY_LAB <- wday(daily_incidents$OCCUR_DATE, label=TRUE)
+daily_incidents$MONTH_NUM <- strftime(daily_incidents$OCCUR_DATE, "%m")
+daily_incidents$MONTH_NUM <- as.numeric(daily_incidents$MONTH_NUM)
+head(daily_incidents)
+```
+
+#### Data Scrub #11 Group by Day of Week
+
+```{r}
+weekday_incidents <- daily_incidents %>%
+     group_by(DAY_LAB) %>%
+     summarise(WEEKDAY_COUNT = sum(INCIDENT_COUNT))
+     weekday_incidents
+```
+
+# Plotting
+Next, create plots and graphs that explore the data, focusing primarily on the Location and Time of the incident.
+
+#### Plot of Number of Incidents per Calendar Day
+
+```{r}
+ggplot(monthly_incidents,aes(x = MONTH, y = MONTHLY_COUNT)) + geom_line() 
+```
+
+
+This graph illustrates a slow downward trend in the number of incidents per day as the years progress. But then in 2020 there was a massive spike.
+
+#### Violin Plot of Incidents aggregated by Calendar Monthly Incidents
+```{r}
+ggplot(data=monthly_incidents, aes(x=MONTH_NAME, y=MONTHLY_COUNT, 
+                                   fill=MONTH_NAME)) +  
+geom_violin() +
+  scale_x_discrete(limits=c("January","February","March","April","May","June",
+                  "July","August","September","October","November","December"))
+```
+
+
+A violin plot shows the distribution of values based on a specified index.  In this case a data frame was created aggregating the incidents based on the calendar month in which they occurred (Jan, Feb, Mar,...).  The Winter months have a more stable patter of shooting incidents.  For example, the month of December the number of incidents occurring is in fairly tight range of approximately 75 to 135.  While the Month of July ranges from approximately 105 to 325.  Generally, the winter months have a predictable pattern of shooting incidents as well as fewer incidents generally.  While the summer months have a wider range in the number of incidents.  But the lower range of incidents in the summer months are proximate to the higher range of the winter months.
+
+#### Graph Murder vs Non-Murder Incidents by Boro
+
+
+```{r}
+colours = c("red","blue")
+mx <- t(as.matrix(boro_df %>% select(2,3)))
+colnames(mx) <- boro_df$BORO
+barplot(mx, main='Attacks by Boro', ylab='Attacks', xlab='Boro', beside = TRUE, col=colours,ylim=c(0,max(mx)*1.3))
+box()
+legend('topright',fill=colours,legend=c('Murders','Non-Murders'))
+```
+
+This graph show a consistent ratio of Murder to Non-Murders amongst the boroughs. Curiously, Queens has far fewer incidents than Brooklyn, even though those two boroughs are the only that share a land border.
+
+#### Bias
+
+When dealing with human demographic data Bias is a large concern. In contrast, my analysis has focused on the Time and Location implications of Incidents. Bias could still be present in the data points upon which I focused. One possible example is the reporting of crime statistics. Certain victims maybe more or less likely to report themselves as the victim of crime to the police.
+
+#### Logistic Model Goal
+
+I opted to try to create a Logistic Model to analyze what factors may correlate with an Incident being a Murder vs Non-Murder. To accomplish this I a “Murder Category” Column by converted the Murder-Statistical-Flag from a True/False Boolean to either 1 / 0 (1 = Murder).
+
+I selected the Categorial version of the variables of - Calendar-Month, Day-of-Week, & Boro (large neighborhood).
+
+#### Create Logistic Model
+
+```{r}
+mylogit <- glm(MURDER_CAT ~ BORO_CAT + MONTH + DOWEEK + HOUR, data = nypd_df, family = "binomial")
+summary(mylogit)
+```
+
+#### Logistical Model Results
+
+Per the result summary of the model, Borough, Month & Day-of-Week have little statistical significance in predicting a shooting resulting in a Murder. The primary factors that are statistically significant in predicting whether a shooting will be a murder is the Hour of the day that the shooting occurred. The shooting hours of 5AM, 7AM, & 6PM being the most likely to predict a Murder.
